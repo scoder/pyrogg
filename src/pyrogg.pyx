@@ -68,6 +68,7 @@ cdef struct communication:   # thread communication
     int waiting
     long read_status[2]
 
+
 cdef class _VorbisRecoder:
     cdef page_writer_function _write
 
@@ -269,6 +270,7 @@ cdef class VorbisFileRecoder(_VorbisRecoder):
             stdio.fclose(coutfile)
         return t
 
+
 cdef void _writeToFile(void* coutfile, ogg.ogg_page* ogg_page) nogil:
     stdio.fwrite(ogg_page.header, 1, ogg_page.header_len, <stdio.FILE*>coutfile)
     stdio.fwrite(ogg_page.body,   1, ogg_page.body_len,   <stdio.FILE*>coutfile)
@@ -336,10 +338,10 @@ cdef void _writeToFilelike(void* outfile_write, ogg.ogg_page* ogg_page) with gil
     write(ogg_page.header[:ogg_page.header_len])
     write(ogg_page.body[:ogg_page.body_len])
 
+
 cdef size_t _readFilelike(void* dest, size_t size, size_t count,
                           void* creader):
-    cdef FilelikeReader reader
-    reader = <FilelikeReader>creader
+    cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         data = reader.read(size * count)
         if data is None:
@@ -360,9 +362,9 @@ cdef size_t _readFilelike(void* dest, size_t size, size_t count,
     stdio.errno = -1
     return 0
 
+
 cdef int _seekFilelike(void* creader, ogg.ogg_int64_t offset, int whence):
-    cdef FilelikeReader reader
-    reader = <FilelikeReader>creader
+    cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         reader.seek(offset, whence)
         return 0
@@ -370,23 +372,24 @@ cdef int _seekFilelike(void* creader, ogg.ogg_int64_t offset, int whence):
         reader._storeException(None)
     return -1
 
+
 cdef long _tellFilelike(void* creader):
-    cdef FilelikeReader reader
-    reader = <FilelikeReader>creader
+    cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         return reader.tell()
     except:
         reader._storeException(None)
     return -1
 
+
 cdef int _closeFilelike(void* creader):
-    cdef FilelikeReader reader
-    reader = <FilelikeReader>creader
+    cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         reader.seek(0)
+        return 0
     except:
-        pass
-    return 0
+        reader._storeException(None)
+    return -1
 
 
 cdef void _splitStereo(char* decbuffer, float** encbuffer, int bytes) nogil:
@@ -399,6 +402,7 @@ cdef void _splitStereo(char* decbuffer, float** encbuffer, int bytes) nogil:
         encbuffer[1][i] = (
             ((decbuffer[i*4+3] << 8) | (0x00ff & <int>decbuffer[i*4+2]))
             ) / 32768.0
+
 
 cdef void _initVorbisEncoder(ogg.ogg_stream_state* stream_state,
                              vorbis.vorbis_dsp_state* dsp_state,
