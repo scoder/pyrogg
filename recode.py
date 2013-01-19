@@ -11,12 +11,12 @@ def recode(filename, destdir, quality):
     basename   = os.path.basename(filename)
     targetname = os.path.join(destdir, basename)
 
-    print "Encoding '%s' in quality %+d" % (basename, quality)
+    print("Encoding '%s' in quality %+d" % (basename, quality))
 
     recoder = pyrogg.VorbisFileRecoder(filename)
     time = recoder.recode(targetname, quality)
-    print "Encoding '%s' in quality %+d took %.2f seconds" % (
-        basename, quality, time)
+    print("Encoding '%s' in quality %+d took %.2f seconds" % (
+          basename, quality, time))
 
 
 def _process(args):
@@ -24,7 +24,7 @@ def _process(args):
     try:
         recode(filename, dirname, quality)
     except (IOError, pyrogg.VorbisException), e:
-        print e
+        print(e)
         return False
     return True
 
@@ -45,23 +45,23 @@ def main():
     options, args = parser.parse_args()
 
     if len(args) == 0:
-        print "No input files found"
+        print("No input files found")
         sys.exit(0)
     if options.output_dir is None:
-        print "Output directory is required, call with '-h' for help"
+        print("Output directory is required, call with '-h' for help")
         sys.exit(0)
 
     quality = min(10, max(-1, options.quality))
     dirname = options.output_dir
 
-    print "Recoding %d file%s to target directory '%s' ..." % (
-        len(args), 's' if len(args) != 1 else '', dirname)
+    print("Recoding %d file%s to target directory '%s' ..." % (
+          len(args), 's' if len(args) != 1 else '', dirname))
 
     if not os.access(dirname, os.F_OK):
         os.makedirs(dirname)
 
     if not os.access(dirname, os.W_OK):
-        print "Cannot write to '%s'" % dirname
+        print("Cannot write to '%s'" % dirname)
 
     any_failures = False
     if options.parallel:
@@ -73,14 +73,14 @@ def main():
             for result, filename in zip(results, args):
                 if not result:
                     any_failures = True
-                    print "Recoding failed for file", filename
+                    print("Recoding failed for file %s" % filename)
         finally:
             pool.close()
     else:
         for filename in args:
             if not _process([filename, dirname, quality]):
                 any_failures = True
-                print "Recoding failed for file", filename
+                print("Recoding failed for file %s" % filename)
     return any_failures
 
 if __name__ == '__main__':
