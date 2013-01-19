@@ -13,7 +13,6 @@ ext_args   = {}
 DEFINES = []
 
 from distutils.core import setup, Extension
-from Cython.Build import cythonize
 
 
 try:
@@ -32,15 +31,24 @@ else:
     cflags.append('-fopenmp')
     libs.append('-fopenmp')
 
-ext_modules = cythonize([
-    Extension(
-        EXT_MODULE,
-        [os.path.join('src', '%s.pyx' % EXT_MODULE)],
-        extra_compile_args = cflags,
-        define_macros = DEFINES,
-        extra_link_args = libs)
-])
+ext_file = os.path.join('src', EXT_MODULE)
+pyx_source = ext_file + '.pyx'
+c_source   = ext_file + '.c'
 
+extension = Extension(
+    EXT_MODULE, [pyx_source],
+    extra_compile_args = cflags,
+    define_macros = DEFINES,
+    extra_link_args = libs)
+
+if not os.path.exists(c_source) or '--recompile' in sys.argv:
+    try: sys.argv.remove('--recompile')
+    except ValueError: pass
+    from Cython.Build import cythonize
+    ext_modules = cythonize([extension])
+else:
+    extension.sources[0] = extension.sources[0][:-4] + '.c'
+    ext_modules = [extension]
 
 setup(
     name = "pyrogg",
