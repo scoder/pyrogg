@@ -65,6 +65,7 @@ cdef extern from "vorbis/codec.h" nogil:
 cdef extern from "vorbis/vorbisfile.h" nogil:
 
     ctypedef struct OggVorbis_File:
+        long current_serialno
         vorbis_info*    vi
         vorbis_comment* vc
 

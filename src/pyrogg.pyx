@@ -114,7 +114,8 @@ cdef class _VorbisRecoder:
         vorbis.vorbis_encode_init_vbr(&vorbis_info, vorbisfile.vi.channels,
                                       vorbisfile.vi.rate, cquality)
         _initVorbisEncoder(&stream_state, &dsp_state, &vorbis_info,
-                           random.randint(0, 2**31))
+                           # use arbitrary but predictable serial number
+                           vorbisfile.current_serialno | int(cquality*10+2))
         vorbis.vorbis_block_init(&dsp_state, &vorbis_block)
         self._writeVorbisHeader(status, &stream_state,
                                 &dsp_state, vorbisfile.vc)
