@@ -338,7 +338,7 @@ cdef void _writeToFilelike(void* outfile_write, ogg.ogg_page* ogg_page) with gil
 
 
 cdef size_t _readFilelike(void* dest, size_t size, size_t count,
-                          void* creader):
+                          void* creader) with gil:
     cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         data = reader.read(size * count)
@@ -364,7 +364,7 @@ cdef size_t _readFilelike(void* dest, size_t size, size_t count,
     return 0
 
 
-cdef int _seekFilelike(void* creader, ogg.ogg_int64_t offset, int whence):
+cdef int _seekFilelike(void* creader, ogg.ogg_int64_t offset, int whence) with gil:
     cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         reader.seek(offset, whence)
@@ -374,7 +374,7 @@ cdef int _seekFilelike(void* creader, ogg.ogg_int64_t offset, int whence):
     return -1
 
 
-cdef long _tellFilelike(void* creader):
+cdef long _tellFilelike(void* creader) with gil:
     cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         return reader.tell()
@@ -383,7 +383,7 @@ cdef long _tellFilelike(void* creader):
     return -1
 
 
-cdef int _closeFilelike(void* creader):
+cdef int _closeFilelike(void* creader) with gil:
     cdef FilelikeReader reader = <FilelikeReader>creader
     try:
         reader.seek(0)
