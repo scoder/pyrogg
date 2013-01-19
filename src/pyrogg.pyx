@@ -313,7 +313,7 @@ cdef class VorbisFilelikeRecoder(_VorbisRecoder):
         cdef vorbis.OggVorbis_File vorbisfile
         cdef FilelikeReader reader
         write = f.write # make sure it's there
-        if write is None:
+        if not callable(write):
             raise TypeError, "writable file-like object required"
         reader = FilelikeReader(self.f)
 
