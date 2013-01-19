@@ -1,10 +1,9 @@
-cimport python, ogg, vorbis
+cimport ogg, vorbis
 
-cimport openmp
+cimport cpython.mem
+cimport cpython.exc
+
 from cython cimport parallel
-
-from python cimport _cstr, _isString
-from cpython cimport pythread
 
 from libc cimport stdio
 from libc.string cimport memcpy
@@ -35,13 +34,26 @@ filelike_callbacks.tell_func  = _tellFilelike
 filelike_callbacks.close_func = _closeFilelike
 
 
+cdef bytes _encodeFilename(filename):
+    if isinstance(filename, bytes):
+        return <bytes>filename
+    elif isinstance(filename, unicode):
+        encoding = sys.getfilesystemencoding()
+        if not encoding:
+            encoding = 'iso8859-1'  # just give it a try ...
+        return (<unicode>filename).encode(encoding)
+    else:
+        raise ValueError("expected file path, got %s" % type(filename))
+
+
 cdef class VorbisFile:
     cdef vorbis.OggVorbis_File _vorbisfile
     cdef object filename
 
-    def __init__(self, filename):
+    def __cinit__(self, filename):
         cdef stdio.FILE* cfile
         cdef int result
+        filename = _encodeFilename(filename)
         cfile = stdio.fopen(filename, "r")
         if cfile is NULL:
             raise IOError, "Opening file %s failed" % filename
@@ -64,8 +76,8 @@ ctypedef void (*page_writer_function)(void*, ogg.ogg_page*) nogil
 
 cdef struct communication:   # thread communication
     int done
-    int buffer_part
-    int waiting
+    int buffer_ready
+    int next_buffer_ready
     long read_status[2]
 
 
@@ -74,8 +86,8 @@ cdef class _VorbisRecoder:
 
     cdef _recode(self, void* status, vorbis.OggVorbis_File* vorbisfile,
                  int target_quality):
-        cdef long read_status, values_read, t0
-        cdef int buffer_part, current_section, result, eos, thread_id
+        cdef long read_status, values_read
+        cdef int buffer_part, current_section, eos, i
         cdef float cquality
         cdef char* decbuffer
         cdef float** encbuffer
@@ -93,7 +105,7 @@ cdef class _VorbisRecoder:
             cquality = target_quality / 10.0
 
         # decoding setup
-        decbuffer = <char*> python.PyMem_Malloc(READ_BUFFER_SIZE*2)
+        decbuffer = <char*> cpython.mem.PyMem_Malloc(READ_BUFFER_SIZE*2)
         if decbuffer is NULL:
             raise MemoryError()
 
@@ -111,76 +123,60 @@ cdef class _VorbisRecoder:
 
         ### copy the data
         com.done = 0
-        com.waiting = 0
-        com.buffer_part = 0
         com.read_status[0] = vorbis.ov_read(
             vorbisfile, decbuffer, READ_BUFFER_SIZE,
             0, 2, 1, &current_section)
-
-        # synchronisation lock
-        lock = pythread.PyThread_allocate_lock()
-        pythread.PyThread_acquire_lock(lock, pythread.WAIT_LOCK)
+        com.buffer_ready = 0
 
         with nogil, parallel.parallel(num_threads=2):
-            thread_id = parallel.threadid()
-            with gil:
-                assert openmp.omp_get_num_threads() == 2  # won't work otherwise ...
-                while not com.done:
-                    if thread_id == 0:
+            while True:
+                # using prange() loop to synchronise
+                for i in parallel.prange(2, nogil=False):
+                    if i == 1:
                         # reader thread
-                        buffer_part = 0 if com.buffer_part else 1
-                        with nogil:
-                            read_status = vorbis.ov_read(
-                                vorbisfile,
-                                decbuffer + (READ_BUFFER_SIZE if buffer_part else 0),
-                                READ_BUFFER_SIZE,
-                                0, 2, 1, &current_section)
+                        buffer_part = 0 if com.buffer_ready == 1 else 1
+                        read_status = vorbis.ov_read(
+                            vorbisfile,
+                            decbuffer + (READ_BUFFER_SIZE * buffer_part),
+                            READ_BUFFER_SIZE,
+                            0, 2, 1, &current_section)
                         com.read_status[buffer_part] = read_status
+                        com.next_buffer_ready = buffer_part
                     else:
                         # writer thread
-                        buffer_part = com.buffer_part
+                        buffer_part = com.buffer_ready
                         read_status = com.read_status[buffer_part]
-                        with nogil:
-                            encbuffer = vorbis.vorbis_analysis_buffer(
-                                &dsp_state, READ_BUFFER_SIZE/4)
-                            if read_status > 0:
-                                values_read = read_status / 4
-                                _splitStereo(
-                                    decbuffer + (READ_BUFFER_SIZE if buffer_part else 0),
-                                    encbuffer, values_read)
-                            else:
-                                values_read = 0
-                            vorbis.vorbis_analysis_wrote(&dsp_state, values_read)
+                        encbuffer = vorbis.vorbis_analysis_buffer(
+                            &dsp_state, READ_BUFFER_SIZE/4)
+                        if read_status > 0:
+                            values_read = read_status / 4
+                            _splitStereo(
+                                decbuffer + (READ_BUFFER_SIZE * buffer_part),
+                                encbuffer, values_read)
+                        else:
+                            values_read = 0
+                        vorbis.vorbis_analysis_wrote(&dsp_state, values_read)
 
-                            eos = self._encodeVorbisBlocks(
-                                status, &stream_state, &dsp_state, &vorbis_block)
+                        eos = self._encodeVorbisBlocks(
+                            status, &stream_state, &dsp_state, &vorbis_block)
                         if eos:
                             com.done = 1
-
-                    # synchronise, then switch buffer parts
-                    if not com.waiting:
-                        # I'm first => wait
-                        com.waiting = 1
-                        with nogil:
-                            pythread.PyThread_acquire_lock(lock, pythread.WAIT_LOCK)
-                    else:
-                        pythread.PyThread_release_lock(lock)
-                        com.waiting = 0
-                        com.buffer_part = 0 if com.buffer_part else 1
-
-        pythread.PyThread_free_lock(lock)
-        t = time() - t
+                if com.done:
+                    break
+                # switch buffers when both are done
+                com.buffer_ready = com.next_buffer_ready
 
         ### clean up
         ogg.ogg_stream_clear(&stream_state)
         vorbis.vorbis_block_clear(&vorbis_block)
         vorbis.vorbis_dsp_clear(&dsp_state)
         vorbis.vorbis_info_clear(&vorbis_info)
-        python.PyMem_Free(decbuffer)
+        cpython.mem.PyMem_Free(decbuffer)
 
         vorbis.ov_clear(vorbisfile) # closes the input file
+        t = time() - t
 
-        read_status = com.read_status[com.buffer_part]
+        read_status = com.read_status[com.buffer_ready]
         if read_status == vorbis.OV_HOLE or read_status == vorbis.OV_EBADLINK:
             raise VorbisDecodeException("lost sync")
 
@@ -237,9 +233,9 @@ cdef class _VorbisRecoder:
 cdef class VorbisFileRecoder(_VorbisRecoder):
     cdef object _input_filename
 
-    def __init__(self, input_filename):
-        self._input_filename = input_filename
+    def __cinit__(self, input_filename):
         self._write = _writeToFile
+        self._input_filename = _encodeFilename(input_filename)
 
     def recode(self, output_filename, quality):
         cdef vorbis.OggVorbis_File vorbisfile
@@ -248,7 +244,7 @@ cdef class VorbisFileRecoder(_VorbisRecoder):
 
         cinfile = stdio.fopen(self._input_filename, "r")
         if cinfile is NULL:
-            python.PyErr_SetFromErrno(IOError)
+            cpython.exc.PyErr_SetFromErrno(IOError)
         result = vorbis.ov_open(cinfile, &vorbisfile, NULL, 0)
         if result == vorbis.OV_ENOTVORBIS:
             stdio.fclose(cinfile)
@@ -282,7 +278,7 @@ cdef class FilelikeReader:
     cdef object seek
     cdef object close
     cdef object exception
-    def __init__(self, f):
+    def __cinit__(self, f):
         self.read  = f.read
         self.tell  = f.tell
         self.seek  = f.seek
@@ -302,7 +298,7 @@ cdef class FilelikeReader:
 cdef class VorbisFilelikeRecoder(_VorbisRecoder):
     cdef object f
 
-    def __init__(self, f):
+    def __cinit__(self, f):
         if not hasattr(f, 'read') or \
                not hasattr(f, 'tell') or \
                not hasattr(f, 'seek'):
@@ -346,20 +342,23 @@ cdef size_t _readFilelike(void* dest, size_t size, size_t count,
         data = reader.read(size * count)
         if data is None:
             return 0
-        elif not python.PyString_Check(data):
-            reader._storeException(
-                TypeError("Invalid return type, string required"))
-        elif python.PyString_GET_SIZE(data) == 0:
-            return 0
-        elif python.PyString_GET_SIZE(data) > size * count:
-            reader._storeException(
-                ValueError("Returned string is too long"))
+        elif isinstance(data, bytes):
+            length = len(<bytes>data)
+            if length > size * count:
+                reader._storeException(
+                    ValueError("Returned string is too long"))
+            else:
+                if length > 0:
+                    memcpy(dest, <char*><bytes>data, length)
+                return length
         else:
-            memcpy(dest, _cstr(data), python.PyString_GET_SIZE(data))
-            return python.PyString_GET_SIZE(data)
+            reader._storeException(
+                TypeError(
+                    "Invalid return type from read(), bytes required, got %s"
+                    % type(data.__name__)))
     except:
         reader._storeException(None)
-    stdio.errno = -1
+    stdio.errno = -1  # propagate read error
     return 0
 
 
@@ -392,9 +391,9 @@ cdef int _closeFilelike(void* creader):
     return -1
 
 
-cdef void _splitStereo(char* decbuffer, float** encbuffer, int bytes) nogil:
+cdef void _splitStereo(char* decbuffer, float** encbuffer, int samples) nogil:
     cdef int i
-    for i in range(bytes):
+    for i in range(samples):
         encbuffer[0][i] = (
             ((decbuffer[i*4+1] << 8) | (0x00ff & <int>decbuffer[i*4]))
             ) / 32768.0
