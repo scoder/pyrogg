@@ -237,27 +237,29 @@ cdef class VorbisFileRecoder(_VorbisRecoder):
         self._write = _writeToFile
         self._input_filename = _encodeFilename(input_filename)
 
-    def recode(self, output_filename, quality):
+    def recode(self, output_filename, int quality):
         cdef vorbis.OggVorbis_File vorbisfile
         cdef stdio.FILE* cinfile
         cdef stdio.FILE* coutfile
 
+        output_filename = _encodeFilename(output_filename)
         cinfile = stdio.fopen(self._input_filename, "r")
         if cinfile is NULL:
             cpython.exc.PyErr_SetFromErrno(IOError)
+
         result = vorbis.ov_open(cinfile, &vorbisfile, NULL, 0)
         if result == vorbis.OV_ENOTVORBIS:
             stdio.fclose(cinfile)
-            raise VorbisException, \
-                  "'%s' is not a Vorbis file" % self._input_filename
+            raise VorbisException(
+                "%r is not a Vorbis file" % self._input_filename)
         if result < 0:
             stdio.fclose(cinfile)
-            raise IOError, "Error reading from file " + self._input_filename
+            raise IOError("Error reading from file %r" % self._input_filename)
 
         coutfile = stdio.fopen(output_filename, "w")
         if coutfile == NULL:
             vorbis.ov_clear(&vorbisfile) # closes the input file
-            raise IOError, "Error opening output file " + output_filename
+            raise IOError("Error opening output file %r" % output_filename)
 
         t = 0
         try:
@@ -306,7 +308,7 @@ cdef class VorbisFilelikeRecoder(_VorbisRecoder):
         self.f = f
         self._write = _writeToFilelike
 
-    def recode(self, f, quality):
+    def recode(self, f, int quality):
         cdef vorbis.OggVorbis_File vorbisfile
         cdef FilelikeReader reader
         write = f.write # make sure it's there
