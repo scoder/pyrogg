@@ -1,0 +1,3 @@
+include *.rst *.py
+include Makefile MANIFEST.in
+recursive-include src *.pyx *.pxd *.c

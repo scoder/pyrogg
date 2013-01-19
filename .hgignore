@@ -1,3 +1,12 @@
 syntax: glob
 
 testoutput
+MANIFEST
+*.ogg
+src/*.c
+src/*.so
+src/*.dll
+src/*.html
+*.egg-info
+dist
+build
