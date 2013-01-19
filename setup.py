@@ -57,7 +57,7 @@ setup(
     author_email="stefan_ml@behnel.de",
     maintainer="pyrogg dev team",
     maintainer_email="stefan_ml@behnel.de",
-    url="http://pypi.python.org/pypi/pyrogg",
+    url="https://github.com/scoder/pyrogg",
 
     description="Recode Ogg-Vorbis files to a different quality level",
     long_description=long_description,
