@@ -58,11 +58,11 @@ Using pip::
 
 Note that this will do a source build, so you need a properly configured
 C compiler on your system that can build Python extension modules, as well
-as the library packages ``libogg``, ``libvorbis``, ``libvorbisfile`` and
-their corresponding development packages.  Most operating systems (including
-all commonly used Linux distributions) will allow you to install them via
-the normal package management tool.  For the development packages, look
-for packages called ``libogg-dev`` or ``libogg-devel``.
+as the library packages ``libogg``, ``libvorbis``, and their corresponding
+development packages.  Most operating systems (including all commonly used
+Linux distributions) will allow you to install them via the normal package
+management tool.  For the development packages, look for packages called
+``libogg-dev`` or ``libogg-devel``.
 
 For Windows and MacOS, however, you need to install them manually.  See here:
 
