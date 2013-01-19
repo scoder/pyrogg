@@ -6,7 +6,7 @@ What is it?
 
 pyrogg is a simple recoding library for Ogg-Vorbis audio files, implemented in Cython.
 It reads Vorbis streams from the provided input files and recodes them to the desired
-quality level (-1 ... 10).  It comes with handy command line interface.
+quality level (-1 ... 10).  It comes with a handy command line interface.
 
 
 Example
