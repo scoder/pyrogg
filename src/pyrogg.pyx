@@ -311,15 +311,15 @@ cdef class VorbisFilelikeRecoder(_VorbisRecoder):
         cdef FilelikeReader reader
         write = f.write # make sure it's there
         if not callable(write):
-            raise TypeError, "writable file-like object required"
+            raise TypeError("writable file-like object required, got %s" % type(f).__name__)
         reader = FilelikeReader(self.f)
 
         result = vorbis.ov_open_callbacks(<void*>reader, &vorbisfile,
                                           NULL, 0, filelike_callbacks)
         if result == vorbis.OV_ENOTVORBIS:
-            raise VorbisException, "file is not a Vorbis file"
+            raise VorbisException("file is not a Vorbis file")
         elif result < 0:
-            raise IOError, "Error reading from file-like"
+            raise IOError("Error reading from file-like")
 
         t = self._recode(<void*>write, &vorbisfile, quality)
 
