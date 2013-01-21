@@ -53,15 +53,15 @@ cdef class VorbisFile:
         filename = _encodeFilename(filename)
         cfile = stdio.fopen(filename, "r")
         if cfile is NULL:
-            raise IOError, "Opening file %s failed" % filename
+            raise IOError("Opening file %r failed" % filename)
         result = vorbis.ov_test(cfile, &self._vorbisfile, NULL, 0)
         if result == 0:
             result = vorbis.ov_test_open(&self._vorbisfile)
         if result < 0:
             vorbis.ov_clear(&self._vorbisfile) # closes the file
             if result == vorbis.OV_ENOTVORBIS:
-                raise VorbisException("'%s' is not a Vorbis file" % filename)
-            raise IOError("Error reading from file %s" % filename)
+                raise VorbisException("%r is not a Vorbis file" % filename)
+            raise IOError("Error reading from file %r" % filename)
         self.filename = filename
 
     def __dealloc__(self):
