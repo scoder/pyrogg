@@ -3,6 +3,7 @@ cimport ogg, vorbis
 cimport cpython.mem
 cimport cpython.exc
 
+cimport cython
 from cython cimport parallel
 
 from libc cimport stdio
@@ -81,6 +82,7 @@ cdef struct communication:   # thread communication
 cdef class _VorbisRecoder:
     cdef page_writer_function _write
 
+    @cython.final
     cdef _recode(self, void* status, vorbis.OggVorbis_File* vorbisfile,
                  int target_quality):
         cdef long read_status, values_read
@@ -180,6 +182,7 @@ cdef class _VorbisRecoder:
 
         return t
 
+    @cython.final
     cdef void _writeVorbisHeader(self, void* status,
                                  ogg.ogg_stream_state* stream_state,
                                  vorbis.vorbis_dsp_state* dsp_state,
@@ -201,6 +204,7 @@ cdef class _VorbisRecoder:
             self._write(status, &header_page)
             result = ogg.ogg_stream_flush(stream_state, &header_page)
 
+    @cython.final
     cdef int _encodeVorbisBlocks(self, void* status,
                                  ogg.ogg_stream_state* stream_state,
                                  vorbis.vorbis_dsp_state* dsp_state,
@@ -213,6 +217,7 @@ cdef class _VorbisRecoder:
             eos = self._writeOggPackets(status, stream_state, dsp_state)
         return eos
 
+    @cython.final
     cdef int _writeOggPackets(self, void* status,
                               ogg.ogg_stream_state* stream_state,
                               vorbis.vorbis_dsp_state* dsp_state) nogil:
@@ -272,6 +277,7 @@ cdef void _writeToFile(void* coutfile, ogg.ogg_page* ogg_page) nogil:
     stdio.fwrite(ogg_page.body,   1, ogg_page.body_len,   <stdio.FILE*>coutfile)
 
 
+@cython.final
 cdef class FilelikeReader:
     cdef object read
     cdef object tell
