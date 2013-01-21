@@ -8,9 +8,6 @@ from cython cimport parallel
 from libc cimport stdio
 from libc.string cimport memcpy
 
-cdef object random
-import random
-
 cdef object time
 from time import time
 
