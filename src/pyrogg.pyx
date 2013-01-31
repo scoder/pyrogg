@@ -32,6 +32,11 @@ filelike_callbacks.tell_func  = _tellFilelike
 filelike_callbacks.close_func = _closeFilelike
 
 
+cdef int _checkVorbisResult(int result_code) except -1:
+    if result_code < 0:
+        raise VorbisException()
+    return 0
+
 cdef bytes _encodeFilename(filename):
     if isinstance(filename, bytes):
         return <bytes>filename
@@ -70,7 +75,7 @@ cdef class VorbisFile:
             vorbis.ov_clear(&self._vorbisfile) # closes the file
 
 
-ctypedef void (*page_writer_function)(void*, ogg.ogg_page*) nogil
+ctypedef int (*page_writer_function)(void*, ogg.ogg_page*) nogil
 
 cdef struct communication:   # thread communication
     int done
@@ -85,8 +90,7 @@ cdef class _VorbisRecoder:
     @cython.final
     cdef _recode(self, void* status, vorbis.OggVorbis_File* vorbisfile,
                  int target_quality):
-        cdef long read_status, values_read
-        cdef int buffer_part, current_section, eos, i
+        cdef int error_status, init_steps
         cdef float cquality
         cdef char* decbuffer
         cdef float** encbuffer
@@ -94,7 +98,6 @@ cdef class _VorbisRecoder:
         cdef vorbis.vorbis_info vorbis_info
         cdef vorbis.vorbis_dsp_state dsp_state
         cdef vorbis.vorbis_block vorbis_block
-        cdef communication com   # thread communication
 
         if target_quality > 10:
             cquality = 1.0
@@ -103,29 +106,57 @@ cdef class _VorbisRecoder:
         else:
             cquality = target_quality / 10.0
 
-        # decoding setup
-        decbuffer = <char*> cpython.mem.PyMem_Malloc(READ_BUFFER_SIZE*2)
-        if decbuffer is NULL:
-            raise MemoryError()
-
         # encoding setup
         vorbis.vorbis_info_init(&vorbis_info)
-        vorbis.vorbis_encode_init_vbr(&vorbis_info, vorbisfile.vi.channels,
-                                      vorbisfile.vi.rate, cquality)
-        _initVorbisEncoder(&stream_state, &dsp_state, &vorbis_info,
-                           # use arbitrary but predictable serial number
-                           vorbisfile.current_serialno | int(cquality*10+2))
-        vorbis.vorbis_block_init(&dsp_state, &vorbis_block)
-        self._writeVorbisHeader(status, &stream_state,
-                                &dsp_state, vorbisfile.vc)
+        error_status = vorbis.vorbis_encode_init_vbr(
+            &vorbis_info, vorbisfile.vi.channels,
+            vorbisfile.vi.rate, cquality)
+        if not error_status:
+            error_status = _initVorbisEncoder(
+                &stream_state, &dsp_state, &vorbis_info,
+                # use arbitrary but predictable serial number
+                vorbisfile.current_serialno | <int>(cquality*10+2))
+        if not error_status:
+            vorbis.vorbis_block_init(&dsp_state, &vorbis_block)
+            error_status = self._writeVorbisHeader(
+                status, &stream_state, &dsp_state, vorbisfile.vc)
 
         t = time()
+        try:
+            if not error_status:
+                decbuffer = <char*> cpython.mem.PyMem_Malloc(READ_BUFFER_SIZE*2)
+                if decbuffer is NULL:
+                    raise MemoryError()
+                self._recodeParallel(
+                    status, decbuffer, vorbisfile,
+                    dsp_state, vorbis_block, stream_state)
+        finally:
+            ogg.ogg_stream_clear(&stream_state)
+            vorbis.vorbis_block_clear(&vorbis_block)
+            vorbis.vorbis_dsp_clear(&dsp_state)
+            vorbis.vorbis_info_clear(&vorbis_info)
+            cpython.mem.PyMem_Free(decbuffer)
+            vorbis.ov_clear(vorbisfile) # closes the input file
+        t = time() - t
+        return t
 
-        ### copy the data
-        com.done = 0
+    @cython.final
+    cdef _recodeParallel(self, void* status, char* decbuffer,
+                         vorbis.OggVorbis_File* vorbisfile,
+                         vorbis.vorbis_dsp_state dsp_state,
+                         vorbis.vorbis_block vorbis_block,
+                         ogg.ogg_stream_state stream_state
+                         ):
+        cdef long read_status, values_read
+        cdef int i, eos, buffer_part, current_section
+        cdef communication com   # thread communication
+
         com.read_status[0] = vorbis.ov_read(
             vorbisfile, decbuffer, READ_BUFFER_SIZE,
             0, 2, 1, &current_section)
+        _checkVorbisResult(com.read_status[0])
+
+        com.done = 0
         com.buffer_ready = 0
 
         with nogil, parallel.parallel(num_threads=2):
@@ -158,7 +189,8 @@ cdef class _VorbisRecoder:
                         vorbis.vorbis_analysis_wrote(&dsp_state, values_read)
 
                         eos = self._encodeVorbisBlocks(
-                            status, &stream_state, &dsp_state, &vorbis_block)
+                            status, &stream_state, &dsp_state,
+                            &vorbis_block)
                         if eos:
                             com.done = 1
                 if com.done:
@@ -166,24 +198,12 @@ cdef class _VorbisRecoder:
                 # switch buffers when both are done
                 com.buffer_ready = com.next_buffer_ready
 
-        ### clean up
-        ogg.ogg_stream_clear(&stream_state)
-        vorbis.vorbis_block_clear(&vorbis_block)
-        vorbis.vorbis_dsp_clear(&dsp_state)
-        vorbis.vorbis_info_clear(&vorbis_info)
-        cpython.mem.PyMem_Free(decbuffer)
-
-        vorbis.ov_clear(vorbisfile) # closes the input file
-        t = time() - t
-
         read_status = com.read_status[com.buffer_ready]
         if read_status == vorbis.OV_HOLE or read_status == vorbis.OV_EBADLINK:
             raise VorbisDecodeException("lost sync")
 
-        return t
-
     @cython.final
-    cdef void _writeVorbisHeader(self, void* status,
+    cdef int _writeVorbisHeader(self, void* status,
                                  ogg.ogg_stream_state* stream_state,
                                  vorbis.vorbis_dsp_state* dsp_state,
                                  vorbis.vorbis_comment* comment):
@@ -192,29 +212,48 @@ cdef class _VorbisRecoder:
         cdef ogg.ogg_packet header_code
         cdef ogg.ogg_page   header_page
         cdef int result
-        vorbis.vorbis_analysis_headerout(dsp_state, comment,
-                                         &header, &header_comm, &header_code)
-
-        ogg.ogg_stream_packetin(stream_state, &header)
-        ogg.ogg_stream_packetin(stream_state, &header_comm)
-        ogg.ogg_stream_packetin(stream_state, &header_code)
+        result = vorbis.vorbis_analysis_headerout(
+            dsp_state, comment,
+            &header, &header_comm, &header_code)
+        if result < 0:
+            return result
+        if ogg.ogg_stream_packetin(stream_state, &header) < 0:
+            return -1
+        if ogg.ogg_stream_packetin(stream_state, &header_comm) < 0:
+            return -1
+        if ogg.ogg_stream_packetin(stream_state, &header_code) < 0:
+            return -1
 
         result = ogg.ogg_stream_flush(stream_state, &header_page)
         while result > 0:
-            self._write(status, &header_page)
+            result = self._write(status, &header_page)
+            if result < 0:
+                return result
             result = ogg.ogg_stream_flush(stream_state, &header_page)
+        return 0
 
     @cython.final
     cdef int _encodeVorbisBlocks(self, void* status,
                                  ogg.ogg_stream_state* stream_state,
                                  vorbis.vorbis_dsp_state* dsp_state,
                                  vorbis.vorbis_block* vorbis_block) nogil:
-        cdef int eos
+        cdef int eos, error_status
         eos = 0
-        while vorbis.vorbis_analysis_blockout(dsp_state, vorbis_block) == 1:
-            vorbis.vorbis_analysis(vorbis_block, NULL)
-            vorbis.vorbis_bitrate_addblock(vorbis_block)
-            eos = self._writeOggPackets(status, stream_state, dsp_state)
+        error_status = vorbis.vorbis_analysis_blockout(dsp_state, vorbis_block)
+        while error_status == 1:
+            error_status = vorbis.vorbis_analysis(vorbis_block, NULL)
+            if error_status < 0:
+                return error_status
+            error_status = vorbis.vorbis_bitrate_addblock(vorbis_block)
+            if error_status < 0:
+                return error_status
+            error_status = self._writeOggPackets(status, stream_state, dsp_state)
+            if error_status < 0:
+                return error_status
+            eos = error_status
+            error_status = vorbis.vorbis_analysis_blockout(dsp_state, vorbis_block)
+        if error_status < 0:
+            return error_status
         return eos
 
     @cython.final
@@ -223,13 +262,19 @@ cdef class _VorbisRecoder:
                               vorbis.vorbis_dsp_state* dsp_state) nogil:
         cdef ogg.ogg_packet ogg_packet
         cdef ogg.ogg_page   ogg_page
-        cdef int eos
+        cdef int eos, error_status
         eos = 0
-        while vorbis.vorbis_bitrate_flushpacket(dsp_state, &ogg_packet):
-            ogg.ogg_stream_packetin(stream_state, &ogg_packet)
+        error_status = vorbis.vorbis_bitrate_flushpacket(dsp_state, &ogg_packet)
+        while error_status > 0:
+            if ogg.ogg_stream_packetin(stream_state, &ogg_packet) < 0:
+                return -1
             while ogg.ogg_stream_pageout(stream_state, &ogg_page) != 0 and not eos:
-                self._write(status, &ogg_page)
+                if self._write(status, &ogg_page) < 0:
+                    return -1
                 eos = ogg.ogg_page_eos(&ogg_page)
+            error_status = vorbis.vorbis_bitrate_flushpacket(dsp_state, &ogg_packet)
+        if error_status < 0:
+            return error_status
         return eos
 
 
@@ -272,9 +317,15 @@ cdef class VorbisFileRecoder(_VorbisRecoder):
         return t
 
 
-cdef void _writeToFile(void* coutfile, ogg.ogg_page* ogg_page) nogil:
-    stdio.fwrite(ogg_page.header, 1, ogg_page.header_len, <stdio.FILE*>coutfile)
-    stdio.fwrite(ogg_page.body,   1, ogg_page.body_len,   <stdio.FILE*>coutfile)
+cdef int _writeToFile(void* coutfile, ogg.ogg_page* ogg_page) nogil:
+    cdef size_t count
+    count = ogg_page.header_len
+    if stdio.fwrite(ogg_page.header, 1, count, <stdio.FILE*>coutfile) < count:
+        return -1
+    count = ogg_page.body_len
+    if stdio.fwrite(ogg_page.body,   1, count, <stdio.FILE*>coutfile) < count:
+        return -1
+    return 0
 
 
 @cython.final
@@ -284,6 +335,7 @@ cdef class FilelikeReader:
     cdef object seek
     cdef object close
     cdef object exception
+
     def __cinit__(self, f):
         self.read  = f.read
         self.tell  = f.tell
@@ -335,10 +387,14 @@ cdef class VorbisFilelikeRecoder(_VorbisRecoder):
         return t
 
 
-cdef void _writeToFilelike(void* outfile_write, ogg.ogg_page* ogg_page) with gil:
-    write = <object>outfile_write
-    write(ogg_page.header[:ogg_page.header_len])
-    write(ogg_page.body[:ogg_page.body_len])
+cdef int _writeToFilelike(void* outfile_write, ogg.ogg_page* ogg_page) with gil:
+    try:
+        write = <object>outfile_write
+        write(ogg_page.header[:ogg_page.header_len])
+        write(ogg_page.body[:ogg_page.body_len])
+        return 0
+    except:
+        return -1
 
 
 cdef size_t _readFilelike(void* dest, size_t size, size_t count,
@@ -409,9 +465,9 @@ cdef void _splitStereo(char* decbuffer, float** encbuffer, int samples) nogil:
             ) / 32768.0
 
 
-cdef void _initVorbisEncoder(ogg.ogg_stream_state* stream_state,
-                             vorbis.vorbis_dsp_state* dsp_state,
-                             vorbis.vorbis_info* vorbis_info,
-                             int serialno):
+cdef int _initVorbisEncoder(ogg.ogg_stream_state* stream_state,
+                            vorbis.vorbis_dsp_state* dsp_state,
+                            vorbis.vorbis_info* vorbis_info,
+                            int serialno):
     vorbis.vorbis_analysis_init(dsp_state, vorbis_info)
-    ogg.ogg_stream_init(stream_state, serialno)
+    return ogg.ogg_stream_init(stream_state, serialno)
