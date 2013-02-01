@@ -138,6 +138,12 @@ cdef class _VorbisRecoder:
             cpython.mem.PyMem_Free(decbuffer)
             vorbis.ov_clear(vorbisfile) # closes the input file
         t = time() - t
+
+        if error_status:
+            raise VorbisException(
+                "Unknown error %d occurred while preparing recoder" %
+                error_status)
+
         return t
 
     @cython.final
