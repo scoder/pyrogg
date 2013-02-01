@@ -167,7 +167,7 @@ cdef class _VorbisRecoder:
         with nogil, parallel.parallel(num_threads=2):
             while True:
                 # using prange() loop to synchronise
-                for i in parallel.prange(2, nogil=False):
+                for i in parallel.prange(2):
                     if i == 1:
                         # reader thread
                         buffer_part = 0 if com.buffer_ready == 1 else 1
