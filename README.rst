@@ -23,6 +23,12 @@ Python usage::
 
    >>> time = rec.recode("output.ogg", quality=1)
 
+Since the time used for decoding is substantially lower than that used for
+encoding, you might want to set the following environment variable to avoid
+busy waiting OpenMP threads::
+
+    OMP_WAIT_POLICY=PASSIVE
+
 
 Why would I use it?
 -------------------
