@@ -92,8 +92,7 @@ cdef class _VorbisRecoder:
                  int target_quality):
         cdef int error_status, init_steps
         cdef float cquality
-        cdef char* decbuffer
-        cdef float** encbuffer
+        cdef char* decbuffer = NULL
         cdef ogg.ogg_stream_state stream_state
         cdef vorbis.vorbis_info vorbis_info
         cdef vorbis.vorbis_dsp_state dsp_state
@@ -189,7 +188,7 @@ cdef class _VorbisRecoder:
                             values_read = read_status / 4
                             _splitStereo(
                                 decbuffer + (READ_BUFFER_SIZE * buffer_part),
-                                encbuffer, values_read)
+                                encbuffer[0], encbuffer[1], values_read)
                         else:
                             values_read = 0
                         vorbis.vorbis_analysis_wrote(&dsp_state, values_read)
@@ -459,14 +458,15 @@ cdef int _closeFilelike(void* creader) with gil:
     return -1
 
 
-cdef void _splitStereo(char* decbuffer, float** encbuffer, int samples) nogil:
+cdef void _splitStereo(char* decbuffer, float* channel1, float* channel2,
+                       int samples) nogil:
     cdef int i
     for i in range(samples):
-        encbuffer[0][i] = (
+        channel1[i] = (
             ((decbuffer[i*4+1] << 8) | (0x00ff & <int>decbuffer[i*4]))
             ) / 32768.0
 
-        encbuffer[1][i] = (
+        channel2[i] = (
             ((decbuffer[i*4+3] << 8) | (0x00ff & <int>decbuffer[i*4+2]))
             ) / 32768.0
 
