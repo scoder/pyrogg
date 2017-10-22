@@ -6,9 +6,9 @@ cdef extern from "ogg/ogg.h" nogil:
         pass
 
     ctypedef struct ogg_page:
-        char *header
+        unsigned char *header
         long header_len
-        char *body
+        unsigned char *body
         long body_len
 
     ctypedef struct ogg_packet:
