@@ -7,6 +7,7 @@ cimport cython
 from cython cimport parallel
 
 from libc cimport stdio
+from libc.errno cimport errno
 from libc.string cimport memcpy
 
 cdef object time
@@ -425,7 +426,7 @@ cdef size_t _readFilelike(void* dest, size_t size, size_t count,
                     % type(data.__name__)))
     except:
         reader._storeException(None)
-    stdio.errno = -1  # propagate read error
+    errno = -1  # propagate read error
     return 0
 
 
